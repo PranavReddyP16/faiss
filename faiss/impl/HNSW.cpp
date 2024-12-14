@@ -916,6 +916,23 @@ int extract_k_from_ResultHandler(ResultHandler<C>& res) {
 
 } // namespace
 
+float heuristic(DistanceComputer& qdis, storage_idx_t current_idx) {
+    // Use the distance between the current node and the query point as the heuristic
+    return qdis(current_idx);
+}
+
+
+struct AStarNode {
+    float f;         // Total cost (g + h)
+    float g;         // Cost so far (distance from query to this node)
+    float distance;  // Actual distance to this node
+    storage_idx_t idx;
+    bool operator<(const AStarNode& other) const {
+        return f > other.f; // Min-heap based on f
+    }
+};
+
+
 HNSWStats HNSW::search(
         DistanceComputer& qdis,
         ResultHandler<C>& res,
@@ -927,10 +944,7 @@ HNSWStats HNSW::search(
     }
     int k = extract_k_from_ResultHandler(res);
 
-    bool bounded_queue =
-            params ? params->bounded_queue : this->search_bounded_queue;
-
-    //  greedy search on upper levels
+    // Greedy search on upper levels
     storage_idx_t nearest = entry_point;
     float d_nearest = qdis(nearest);
 
@@ -940,29 +954,36 @@ HNSWStats HNSW::search(
         stats.combine(local_stats);
     }
 
-    int ef = std::max(params ? params->efSearch : efSearch, k);
-    if (bounded_queue) { // this is the most common branch
-        MinimaxHeap candidates(ef);
+    // A* search on the bottom level
+    std::priority_queue<AStarNode> open_set;
+    open_set.push({d_nearest, 0.0f, d_nearest, nearest}); // Initialize with the nearest node
 
-        candidates.push(nearest, d_nearest);
+    while (!open_set.empty()) {
+        AStarNode current = open_set.top();
+        open_set.pop();
 
-        search_from_candidates(
-                *this, qdis, res, candidates, vt, stats, 0, 0, params);
-    } else {
-        std::priority_queue<Node> top_candidates =
-                search_from_candidate_unbounded(
-                        *this, Node(d_nearest, nearest), qdis, ef, &vt, stats);
-
-        while (top_candidates.size() > k) {
-            top_candidates.pop();
+        // Add the current node to results
+        if (res.add_result(current.distance, current.idx)) {
+            vt.set(current.idx); // Mark as visited
         }
 
-        while (!top_candidates.empty()) {
-            float d;
-            storage_idx_t label;
-            std::tie(d, label) = top_candidates.top();
-            res.add_result(d, label);
-            top_candidates.pop();
+        // Explore neighbors
+        size_t begin, end;
+        neighbor_range(current.idx, 0, &begin, &end);
+
+        for (size_t j = begin; j < end; j++) {
+            storage_idx_t neighbor_idx = neighbors[j];
+            if (neighbor_idx < 0 || vt.get(neighbor_idx)) {
+                continue; // Skip invalid or already visited nodes
+            }
+
+            vt.set(neighbor_idx);
+
+            float g_score = current.g + qdis(neighbor_idx);
+            float h_score = heuristic(qdis, neighbor_idx);
+            float f_score = g_score + h_score;
+
+            open_set.push({f_score, g_score, g_score, neighbor_idx});
         }
     }
 
@@ -970,6 +991,7 @@ HNSWStats HNSW::search(
 
     return stats;
 }
+
 
 void HNSW::search_level_0(
         DistanceComputer& qdis,
