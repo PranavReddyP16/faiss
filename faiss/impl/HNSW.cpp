@@ -940,8 +940,8 @@ HNSWStats HNSW::search(
         ResultHandler<C>& res,
         VisitedTable& vt,
         const SearchParametersHNSW* params,
-        const std::string& csv_filename = "a_star_metrics.csv",
-        const std::string& recall_filename = "a_star_results.csv") const {
+        const std::string& csv_filename,
+        const std::string& recall_filename) const {
     HNSWStats stats;
     if (entry_point == -1) {
         return stats;
