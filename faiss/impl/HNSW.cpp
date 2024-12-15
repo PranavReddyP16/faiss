@@ -994,7 +994,7 @@ HNSWStats HNSW::search(
     int distance_computations = 0;
     int query_step = 0;
 
-    while (!open_set.empty() && nodes_expanded < efSearch) {
+    while (!open_set.empty()) {
         AStarNode current = open_set.top();
         open_set.pop();
 
@@ -1003,12 +1003,18 @@ HNSWStats HNSW::search(
             previous_best_distance = current.distance;
         }
 
-        // Check stopping condition: relative distance
-        if (do_dis_check && open_set.size() > efSearch) {
+        // Add the current node to results
+        if (res.add_result(current.distance, current.idx)) {
+            vt.set(current.idx); // Mark as visited
+            recall_file << query_step << "," << current.idx << "," << current.distance << "\n";
+        }
+
+        // Check stopping condition: Relative distance check
+        if (do_dis_check) {
             float d0 = current.f; // Best current distance
             int count_below_threshold = 0;
 
-            // Count number of candidates with distance smaller than d0
+            // Count how many candidates have distance smaller than d0
             std::priority_queue<AStarNode> temp_set = open_set;
             while (!temp_set.empty() && temp_set.top().f < d0) {
                 temp_set.pop();
@@ -1022,12 +1028,6 @@ HNSWStats HNSW::search(
 
         // Metrics: Count expanded nodes
         nodes_expanded++;
-
-        // Add the current node to results
-        if (res.add_result(current.distance, current.idx)) {
-            vt.set(current.idx); // Mark as visited
-            recall_file << query_step << "," << current.idx << "," << current.distance << "\n";
-        }
 
         // Explore neighbors
         size_t begin, end;
@@ -1047,6 +1047,16 @@ HNSWStats HNSW::search(
             float f_score = g_score + h_score;
 
             open_set.push({f_score, g_score, g_score, neighbor_idx});
+        }
+
+        // Limit candidate set size dynamically
+        if (open_set.size() > efSearch) {
+            std::priority_queue<AStarNode> temp_set;
+            for (int i = 0; i < efSearch; ++i) {
+                temp_set.push(open_set.top());
+                open_set.pop();
+            }
+            open_set = std::move(temp_set);
         }
 
         // Write metrics for this step to the CSV
@@ -1071,6 +1081,7 @@ HNSWStats HNSW::search(
 
     return stats;
 }
+
 
 
 
