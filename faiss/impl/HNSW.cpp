@@ -940,21 +940,22 @@ HNSWStats HNSW::search(
         ResultHandler<C>& res,
         VisitedTable& vt,
         const SearchParametersHNSW* params,
-        const std::string& csv_filename,
-        const std::string& recall_filename) const {
+        const std::string& csv_filename = "a_star_metrics.csv",
+        const std::string& recall_filename = "a_star_results.csv") const {
     HNSWStats stats;
     if (entry_point == -1) {
         return stats;
     }
     int k = extract_k_from_ResultHandler(res);
+    int efSearch = params ? params->efSearch : this->efSearch;
+    bool do_dis_check = params ? params->check_relative_distance : this->check_relative_distance;
 
     // Prepare files for metrics
     static bool csv_initialized = false;
     std::ofstream csv_file;
     if (!csv_initialized) {
         csv_file.open(csv_filename, std::ios::out);
-        csv_file << "Query,Step,BestDistance,OpenSetSize,NodesExpanded,DistanceComputations,"
-                 << "HeuristicContribution,PathDepth,ExplorationVsExploitation\n"; // Header
+        csv_file << "Query,Step,BestDistance,OpenSetSize,NodesExpanded,DistanceComputations\n"; // Header
         csv_initialized = true;
     } else {
         csv_file.open(csv_filename, std::ios::app);
@@ -983,7 +984,7 @@ HNSWStats HNSW::search(
         stats.combine(local_stats);
     }
 
-    // A* search on the bottom level
+    // A* search on the bottom layer
     std::priority_queue<AStarNode> open_set;
     open_set.push({d_nearest, 0.0f, d_nearest, nearest}); // Initialize with the nearest node
 
@@ -991,12 +992,9 @@ HNSWStats HNSW::search(
     float previous_best_distance = std::numeric_limits<float>::max();
     int nodes_expanded = 0;
     int distance_computations = 0;
-    int path_depth = 0;
-    int exploration_count = 0;
-    int exploitation_count = 0;
     int query_step = 0;
 
-    while (!open_set.empty()) {
+    while (!open_set.empty() && nodes_expanded < efSearch) {
         AStarNode current = open_set.top();
         open_set.pop();
 
@@ -1005,30 +1003,31 @@ HNSWStats HNSW::search(
             previous_best_distance = current.distance;
         }
 
+        // Check stopping condition: relative distance
+        if (do_dis_check && open_set.size() > efSearch) {
+            float d0 = current.f; // Best current distance
+            int count_below_threshold = 0;
+
+            // Count number of candidates with distance smaller than d0
+            std::priority_queue<AStarNode> temp_set = open_set;
+            while (!temp_set.empty() && temp_set.top().f < d0) {
+                temp_set.pop();
+                count_below_threshold++;
+            }
+
+            if (count_below_threshold >= efSearch) {
+                break; // Stop if enough candidates are below the threshold
+            }
+        }
+
         // Metrics: Count expanded nodes
         nodes_expanded++;
-
-        // Metrics: Exploration vs. Exploitation
-        if (current.f - current.g < 1e-6) {
-            exploitation_count++;
-        } else {
-            exploration_count++;
-        }
 
         // Add the current node to results
         if (res.add_result(current.distance, current.idx)) {
             vt.set(current.idx); // Mark as visited
             recall_file << query_step << "," << current.idx << "," << current.distance << "\n";
         }
-
-        // Metrics: Track heuristic contribution
-        float heuristic_contribution = (current.f > 0) ? current.f - current.g : 0.0f;
-
-        // Write metrics for this step to the CSV
-        csv_file << query_step << "," << query_step++ << "," << previous_best_distance << ","
-                 << open_set.size() << "," << nodes_expanded << "," << distance_computations << ","
-                 << heuristic_contribution << "," << path_depth << ","
-                 << (exploration_count / (float)(exploration_count + exploitation_count)) << "\n";
 
         // Explore neighbors
         size_t begin, end;
@@ -1050,7 +1049,9 @@ HNSWStats HNSW::search(
             open_set.push({f_score, g_score, g_score, neighbor_idx});
         }
 
-        path_depth++;
+        // Write metrics for this step to the CSV
+        csv_file << query_step << "," << query_step++ << "," << previous_best_distance << ","
+                 << open_set.size() << "," << nodes_expanded << "," << distance_computations << "\n";
     }
 
     vt.advance();
@@ -1059,11 +1060,11 @@ HNSWStats HNSW::search(
     auto end_time = std::chrono::high_resolution_clock::now();
     double search_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
 
-    // Write overall metrics for this query
-    std::cout << "Query Metrics:\n";
-    std::cout << "Nodes Expanded: " << nodes_expanded << "\n";
-    std::cout << "Distance Computations: " << distance_computations << "\n";
-    std::cout << "Search Time (us): " << search_time << "\n";
+    // Display overall metrics for this query
+    std::cout << "A* Query Metrics:" << std::endl;
+    std::cout << "Nodes Expanded: " << nodes_expanded << std::endl;
+    std::cout << "Distance Computations: " << distance_computations << std::endl;
+    std::cout << "Search Time (us): " << search_time << std::endl;
 
     csv_file.close();
     recall_file.close();
