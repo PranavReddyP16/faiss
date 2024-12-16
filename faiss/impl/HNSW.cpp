@@ -936,7 +936,9 @@ HNSWStats HNSW::search(
     std::ofstream csv_file;
     if (!csv_initialized) {
         csv_file.open(csv_filename, std::ios::out);
-        csv_file << "Query,Step,BestDistance,OpenSetSize,NodesExpanded,DistanceComputations\n"; // Header
+        csv_file << "Query,Step,BestDistance,BestDistanceDelta,OpenSetSize,MaxOpenSetSize,"
+                    "NodesExpanded,DistanceComputations,DistanceComputationsPerStep,"
+                    "NumNeighborsEvaluated,AverageBranchingFactor,SearchTime\n"; // Header
         csv_initialized = true;
     } else {
         csv_file.open(csv_filename, std::ios::app);
@@ -969,18 +971,28 @@ HNSWStats HNSW::search(
     MinimaxHeap candidates(efSearch);
     candidates.push(nearest, d_nearest);
 
+    // Initialize metrics
     int nodes_expanded = 0;
     int distance_computations = 0;
+    int total_neighbors_evaluated = 0;
     int query_step = 0;
     float previous_best_distance = std::numeric_limits<float>::max();
+    float best_distance_delta = 0;
+    int max_open_set_size = 0;
 
     while (candidates.size() > 0) {
         float d0;
         storage_idx_t v0 = candidates.pop_min(&d0);
 
-        // Metrics: Update best distance
+        // Metrics: Update best distance and delta
+        best_distance_delta = std::abs(d0 - previous_best_distance);
         if (d0 < previous_best_distance) {
             previous_best_distance = d0;
+        }
+
+        // Metrics: Update max open set size
+        if (candidates.size() > max_open_set_size) {
+            max_open_set_size = candidates.size();
         }
 
         // Metrics: Count expanded nodes
@@ -996,6 +1008,7 @@ HNSWStats HNSW::search(
         size_t begin, end;
         neighbor_range(v0, 0, &begin, &end);
 
+        int neighbors_evaluated = 0;
         for (size_t j = begin; j < end; j++) {
             storage_idx_t neighbor_idx = neighbors[j];
             if (neighbor_idx < 0 || vt.get(neighbor_idx)) {
@@ -1006,12 +1019,28 @@ HNSWStats HNSW::search(
 
             float dist = qdis(neighbor_idx);
             distance_computations++;
+            neighbors_evaluated++;
             candidates.push(neighbor_idx, dist);
         }
 
+        // Update total neighbors evaluated
+        total_neighbors_evaluated += neighbors_evaluated;
+
+        // Metrics: Average branching factor
+        float average_branching_factor = nodes_expanded > 0
+                                         ? static_cast<float>(total_neighbors_evaluated) / nodes_expanded
+                                         : 0.0f;
+
+        // Metrics: Distance computations per step
+        int distance_computations_per_step = distance_computations;
+
         // Write metrics for this step to the CSV
-        csv_file << query_step << "," << query_step++ << "," << previous_best_distance << ","
-                 << candidates.size() << "," << nodes_expanded << "," << distance_computations << "\n";
+        csv_file << query_step << "," << previous_best_distance << "," << best_distance_delta << ","
+                 << candidates.size() << "," << max_open_set_size << "," << nodes_expanded << ","
+                 << distance_computations << "," << distance_computations_per_step << ","
+                 << neighbors_evaluated << "," << average_branching_factor << "," << 0.0 << "\n"; // SearchTime will be added later
+
+        query_step++;
     }
 
     vt.advance();
@@ -1020,10 +1049,16 @@ HNSWStats HNSW::search(
     auto end_time = std::chrono::high_resolution_clock::now();
     double search_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
 
+    // Update SearchTime in the CSV
+    csv_file.seekp(-6, std::ios_base::end); // Go back to last SearchTime placeholder
+    csv_file << search_time << "\n";
+
     // Display overall metrics for this query
     std::cout << "HNSW Query Metrics:" << std::endl;
     std::cout << "Nodes Expanded: " << nodes_expanded << std::endl;
     std::cout << "Distance Computations: " << distance_computations << std::endl;
+    std::cout << "Total Neighbors Evaluated: " << total_neighbors_evaluated << std::endl;
+    std::cout << "Max Open Set Size: " << max_open_set_size << std::endl;
     std::cout << "Search Time (us): " << search_time << std::endl;
 
     csv_file.close();
@@ -1031,6 +1066,8 @@ HNSWStats HNSW::search(
 
     return stats;
 }
+
+
 
 void HNSW::search_level_0(
         DistanceComputer& qdis,
