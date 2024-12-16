@@ -1009,23 +1009,6 @@ HNSWStats HNSW::search(
             recall_file << query_step << "," << current.idx << "," << current.distance << "\n";
         }
 
-        // Check stopping condition: Relative distance check
-        if (do_dis_check) {
-            float d0 = current.f; // Best current distance
-            int count_below_threshold = 0;
-
-            // Count how many candidates have distance smaller than d0
-            std::priority_queue<AStarNode> temp_set = open_set;
-            while (!temp_set.empty() && temp_set.top().f < d0) {
-                temp_set.pop();
-                count_below_threshold++;
-            }
-
-            if (count_below_threshold >= efSearch) {
-                break; // Stop if enough candidates are below the threshold
-            }
-        }
-
         // Metrics: Count expanded nodes
         nodes_expanded++;
 
@@ -1052,11 +1035,27 @@ HNSWStats HNSW::search(
         // Limit candidate set size dynamically
         if (open_set.size() > efSearch) {
             std::priority_queue<AStarNode> temp_set;
-            for (int i = 0; i < efSearch; ++i) {
+            for (int i = 0; i < efSearch && !open_set.empty(); ++i) {
                 temp_set.push(open_set.top());
                 open_set.pop();
             }
             open_set = std::move(temp_set);
+        }
+
+        // Stopping Condition: Relative distance check
+        if (do_dis_check) {
+            float d0 = current.f; // Best current distance
+            int count_below_threshold = 0;
+
+            std::priority_queue<AStarNode> temp_set = open_set;
+            while (!temp_set.empty() && temp_set.top().f < d0) {
+                temp_set.pop();
+                count_below_threshold++;
+            }
+
+            if (count_below_threshold >= efSearch) {
+                break; // Stop if enough candidates are below the threshold
+            }
         }
 
         // Write metrics for this step to the CSV
