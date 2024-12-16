@@ -955,7 +955,9 @@ HNSWStats HNSW::search(
     std::ofstream csv_file;
     if (!csv_initialized) {
         csv_file.open(csv_filename, std::ios::out);
-        csv_file << "Query,Step,BestDistance,OpenSetSize,NodesExpanded,DistanceComputations\n"; // Header
+        csv_file << "Query,Step,BestDistance,BestDistanceDelta,OpenSetSize,MaxOpenSetSize,"
+                    "NodesExpanded,DistanceComputations,DistanceComputationsPerStep,"
+                    "NumNeighborsEvaluated,AverageBranchingFactor,SearchTime\n"; // Header
         csv_initialized = true;
     } else {
         csv_file.open(csv_filename, std::ios::app);
@@ -990,18 +992,30 @@ HNSWStats HNSW::search(
 
     // Metrics
     float previous_best_distance = std::numeric_limits<float>::max();
+    float best_distance_delta = 0.0f;
     int nodes_expanded = 0;
     int distance_computations = 0;
     int query_step = 0;
+    int max_open_set_size = 0;
+    int total_neighbors_evaluated = 0;
 
     while (!open_set.empty()) {
         AStarNode current = open_set.top();
         open_set.pop();
 
-        // Metrics: Update best distance
+        // Metrics: Update best distance and delta
+        best_distance_delta = std::abs(current.distance - previous_best_distance);
         if (current.distance < previous_best_distance) {
             previous_best_distance = current.distance;
         }
+
+        // Metrics: Update max open set size
+        if (open_set.size() > max_open_set_size) {
+            max_open_set_size = open_set.size();
+        }
+
+        // Metrics: Count expanded nodes
+        nodes_expanded++;
 
         // Add the current node to results
         if (res.add_result(current.distance, current.idx)) {
@@ -1009,13 +1023,11 @@ HNSWStats HNSW::search(
             recall_file << query_step << "," << current.idx << "," << current.distance << "\n";
         }
 
-        // Metrics: Count expanded nodes
-        nodes_expanded++;
-
         // Explore neighbors
         size_t begin, end;
         neighbor_range(current.idx, 0, &begin, &end);
 
+        int neighbors_evaluated = 0;
         for (size_t j = begin; j < end; j++) {
             storage_idx_t neighbor_idx = neighbors[j];
             if (neighbor_idx < 0 || vt.get(neighbor_idx)) {
@@ -1029,10 +1041,14 @@ HNSWStats HNSW::search(
             float h_score = heuristic(qdis, neighbor_idx);
             float f_score = g_score + h_score;
 
+            neighbors_evaluated++;
             open_set.push({f_score, g_score, g_score, neighbor_idx});
         }
 
-        // Limit candidate set size dynamically
+        // Update total neighbors evaluated
+        total_neighbors_evaluated += neighbors_evaluated;
+
+        // Limit open set size
         if (open_set.size() > efSearch) {
             std::priority_queue<AStarNode> temp_set;
             for (int i = 0; i < efSearch && !open_set.empty(); ++i) {
@@ -1058,9 +1074,17 @@ HNSWStats HNSW::search(
             }
         }
 
+        auto cur_time = std::chrono::high_resolution_clock::now();
+        double search_time = std::chrono::duration_cast<std::chrono::microseconds>(cur_time - start_time).count();
+
         // Write metrics for this step to the CSV
-        csv_file << query_step << "," << query_step++ << "," << previous_best_distance << ","
-                 << open_set.size() << "," << nodes_expanded << "," << distance_computations << "\n";
+        csv_file << query_step << "," << previous_best_distance << "," << best_distance_delta << ","
+                 << open_set.size() << "," << max_open_set_size << "," << nodes_expanded << ","
+                 << distance_computations << "," << distance_computations << ","
+                 << neighbors_evaluated << "," << (nodes_expanded > 0 ? static_cast<float>(total_neighbors_evaluated) / nodes_expanded : 0.0f)
+                 << "," << search_time << "\n"; // SearchTime will be added later
+
+        query_step++;
     }
 
     vt.advance();
@@ -1069,7 +1093,6 @@ HNSWStats HNSW::search(
     auto end_time = std::chrono::high_resolution_clock::now();
     double search_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
 
-    // Display overall metrics for this query
     std::cout << "A* Query Metrics:" << std::endl;
     std::cout << "Nodes Expanded: " << nodes_expanded << std::endl;
     std::cout << "Distance Computations: " << distance_computations << std::endl;
@@ -1080,8 +1103,6 @@ HNSWStats HNSW::search(
 
     return stats;
 }
-
-
 
 
 void HNSW::search_level_0(
