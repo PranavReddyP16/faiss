@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <string>
 #include <fstream>
+#include <filesystem>
 #include <chrono>
 
 #include <faiss/impl/AuxIndexStructures.h>
@@ -930,26 +931,26 @@ HNSWStats HNSW::search(
         return stats;
     }
     int k = extract_k_from_ResultHandler(res);
+    int efSearch = params ? params->efSearch : this->efSearch;
 
     // Prepare files for metrics
-    static bool csv_initialized = false;
     std::ofstream csv_file;
-    if (!csv_initialized) {
+
+    if (!std::filesystem::exists(csv_filename)) {
         csv_file.open(csv_filename, std::ios::out);
-        csv_file << "Query,Step,BestDistance,BestDistanceDelta,OpenSetSize,MaxOpenSetSize,"
+        csv_file << "Step,BestDistance,BestDistanceDelta,OpenSetSize,MaxOpenSetSize,"
                     "NodesExpanded,DistanceComputations,DistanceComputationsPerStep,"
                     "NumNeighborsEvaluated,AverageBranchingFactor,SearchTime\n"; // Header
-        csv_initialized = true;
     } else {
         csv_file.open(csv_filename, std::ios::app);
     }
 
-    static bool recall_initialized = false;
+    // Prepare the recall file
     std::ofstream recall_file;
-    if (!recall_initialized) {
+
+    if (!std::filesystem::exists(recall_filename)) {
         recall_file.open(recall_filename, std::ios::out);
         recall_file << "Query,Index,Distance\n"; // Header
-        recall_initialized = true;
     } else {
         recall_file.open(recall_filename, std::ios::app);
     }
@@ -976,9 +977,10 @@ HNSWStats HNSW::search(
     int distance_computations = 0;
     int total_neighbors_evaluated = 0;
     int query_step = 0;
-    float previous_best_distance = std::numeric_limits<float>::max();
-    float best_distance_delta = 0;
     int max_open_set_size = 0;
+    int previous_distance_computations = 0;
+    float previous_best_distance = std::numeric_limits<float>::max();
+    float best_distance_delta = 0.0f;
 
     while (candidates.size() > 0) {
         float d0;
@@ -1026,13 +1028,9 @@ HNSWStats HNSW::search(
         // Update total neighbors evaluated
         total_neighbors_evaluated += neighbors_evaluated;
 
-        // Metrics: Average branching factor
-        float average_branching_factor = nodes_expanded > 0
-                                         ? static_cast<float>(total_neighbors_evaluated) / nodes_expanded
-                                         : 0.0f;
-
         // Metrics: Distance computations per step
-        int distance_computations_per_step = distance_computations;
+        int distance_computations_per_step = distance_computations - previous_distance_computations;
+        previous_distance_computations = distance_computations;
 
         // End timing
         auto cur_time = std::chrono::high_resolution_clock::now();
@@ -1042,16 +1040,18 @@ HNSWStats HNSW::search(
         csv_file << query_step << "," << previous_best_distance << "," << best_distance_delta << ","
                  << candidates.size() << "," << max_open_set_size << "," << nodes_expanded << ","
                  << distance_computations << "," << distance_computations_per_step << ","
-                 << neighbors_evaluated << "," << average_branching_factor << "," << search_time << "\n"; // SearchTime will be added later
+                 << neighbors_evaluated << ","
+                 << (nodes_expanded > 0 ? static_cast<float>(total_neighbors_evaluated) / nodes_expanded : 0.0f) << ","
+                 << search_time << "\n";
 
         query_step++;
     }
 
     vt.advance();
-    
+
     // End timing
-    auto cur_time = std::chrono::high_resolution_clock::now();
-    double search_time = std::chrono::duration_cast<std::chrono::microseconds>(cur_time - start_time).count();
+    auto end_time = std::chrono::high_resolution_clock::now();
+    double search_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
 
     // Display overall metrics for this query
     std::cout << "HNSW Query Metrics:" << std::endl;
