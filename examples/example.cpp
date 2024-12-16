@@ -34,8 +34,8 @@ std::vector<float> read_vectors(const std::string& filename, int& num_vectors, i
 
 int main() {
     // Filenames for dataset and query vectors
-    const std::string dataset_file = "/home/ubuntu/Academics/IndependentStudy/dataset_vectors.csv";
-    const std::string query_file = "/home/ubuntu/Academics/IndependentStudy/query_vectors.csv";
+    const std::string dataset_file = "/mnt/nfs/home/ppesaladinne/work1/dataset_vectors.csv";
+    const std::string query_file = "/mnt/nfs/home/ppesaladinne/work1/query_vectors.csv";
 
     // Read dataset vectors
     int nb, d;
