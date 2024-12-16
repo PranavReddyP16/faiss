@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <string>
 #include <fstream>
+#include <filesystem>
 #include <chrono>
 
 #include <faiss/impl/AuxIndexStructures.h>
@@ -951,25 +952,31 @@ HNSWStats HNSW::search(
     bool do_dis_check = params ? params->check_relative_distance : this->check_relative_distance;
 
     // Prepare files for metrics
-    static bool csv_initialized = false;
     std::ofstream csv_file;
-    if (!csv_initialized) {
+
+    // Check if the file already exists
+    if (!std::filesystem::exists(csv_filename)) {
+        // Overwrite and write the header if the file does not exist
         csv_file.open(csv_filename, std::ios::out);
-        csv_file << "Query,Step,BestDistance,BestDistanceDelta,OpenSetSize,MaxOpenSetSize,"
-                    "NodesExpanded,DistanceComputations,DistanceComputationsPerStep,"
-                    "NumNeighborsEvaluated,AverageBranchingFactor,SearchTime\n"; // Header
-        csv_initialized = true;
+        csv_file << "Step,BestDistance,BestDistanceDelta,OpenSetSize,MaxOpenSetSize,"
+            "NodesExpanded,DistanceComputations,DistanceComputationsPerStep,"
+            "NumNeighborsEvaluated,AverageBranchingFactor,SearchTime\n"; // Write the header
     } else {
+        // Append data for subsequent queries within the same run
         csv_file.open(csv_filename, std::ios::app);
     }
 
-    static bool recall_initialized = false;
+
+    // Prepare the recall file
     std::ofstream recall_file;
-    if (!recall_initialized) {
+
+    // Check if the file already exists
+    if (!std::filesystem::exists(recall_filename)) {
+        // Overwrite and write the header if the file does not exist
         recall_file.open(recall_filename, std::ios::out);
-        recall_file << "Query,Index,Distance\n"; // Header
-        recall_initialized = true;
+        recall_file << "Query,Index,Distance\n"; // Write the header
     } else {
+        // Append data for subsequent queries within the same run
         recall_file.open(recall_filename, std::ios::app);
     }
 
@@ -998,6 +1005,7 @@ HNSWStats HNSW::search(
     int query_step = 0;
     int max_open_set_size = 0;
     int total_neighbors_evaluated = 0;
+    int previous_distance_computations = 0;
 
     while (!open_set.empty()) {
         AStarNode current = open_set.top();
@@ -1077,12 +1085,16 @@ HNSWStats HNSW::search(
         auto cur_time = std::chrono::high_resolution_clock::now();
         double search_time = std::chrono::duration_cast<std::chrono::microseconds>(cur_time - start_time).count();
 
-        // Write metrics for this step to the CSV
+        int distance_computations_per_step = distance_computations - previous_distance_computations;
+        previous_distance_computations = distance_computations;
+
+        // write metrics for this step to the csv
         csv_file << query_step << "," << previous_best_distance << "," << best_distance_delta << ","
-                 << open_set.size() << "," << max_open_set_size << "," << nodes_expanded << ","
-                 << distance_computations << "," << distance_computations << ","
-                 << neighbors_evaluated << "," << (nodes_expanded > 0 ? static_cast<float>(total_neighbors_evaluated) / nodes_expanded : 0.0f)
-                 << "," << search_time << "\n"; // SearchTime will be added later
+            << open_set.size() << "," << max_open_set_size << "," << nodes_expanded << ","
+            << distance_computations << "," << distance_computations_per_step << "," // added
+            << neighbors_evaluated << ","
+            << (nodes_expanded > 0 ? static_cast<float>(total_neighbors_evaluated) / nodes_expanded : 0.0f) << ","
+            << search_time << "\n";
 
         query_step++;
     }
