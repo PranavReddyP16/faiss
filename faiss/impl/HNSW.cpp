@@ -1034,24 +1034,24 @@ HNSWStats HNSW::search(
         // Metrics: Distance computations per step
         int distance_computations_per_step = distance_computations;
 
+        // End timing
+        auto cur_time = std::chrono::high_resolution_clock::now();
+        double search_time = std::chrono::duration_cast<std::chrono::microseconds>(cur_time - start_time).count();
+
         // Write metrics for this step to the CSV
         csv_file << query_step << "," << previous_best_distance << "," << best_distance_delta << ","
                  << candidates.size() << "," << max_open_set_size << "," << nodes_expanded << ","
                  << distance_computations << "," << distance_computations_per_step << ","
-                 << neighbors_evaluated << "," << average_branching_factor << "," << 0.0 << "\n"; // SearchTime will be added later
+                 << neighbors_evaluated << "," << average_branching_factor << "," << search_time << "\n"; // SearchTime will be added later
 
         query_step++;
     }
 
     vt.advance();
-
+    
     // End timing
-    auto end_time = std::chrono::high_resolution_clock::now();
-    double search_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-
-    // Update SearchTime in the CSV
-    csv_file.seekp(-6, std::ios_base::end); // Go back to last SearchTime placeholder
-    csv_file << search_time << "\n";
+    auto cur_time = std::chrono::high_resolution_clock::now();
+    double search_time = std::chrono::duration_cast<std::chrono::microseconds>(cur_time - start_time).count();
 
     // Display overall metrics for this query
     std::cout << "HNSW Query Metrics:" << std::endl;
