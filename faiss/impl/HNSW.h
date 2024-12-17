@@ -201,8 +201,8 @@ struct HNSW {
             ResultHandler<C>& res,
             VisitedTable& vt,
             const SearchParametersHNSW* params = nullptr,
-            const std::string& csv_filename = "/home/ubuntu/Academics/IndependentStudy/hnsw_metrics.csv",
-            const std::string& recall_filename = "/home/ubuntu/Academics/IndependentStudy/hnsw_results.csv") const;
+            const std::string& csv_filename = "/mnt/nfs/home/ppesaladinne/work1/hnsw_metrics.csv",
+            const std::string& recall_filename = "/mnt/nfs/home/ppesaladinne/work1/hnsw_results.csv") const;
 
     /// search only in level 0 from a given vertex
     void search_level_0(
